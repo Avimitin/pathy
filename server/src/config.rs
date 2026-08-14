@@ -8,6 +8,16 @@ pub enum ContextGating {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CompletionMode {
+    /// Complete only inside string literals.
+    String,
+    /// Also complete bare path tokens anywhere in the document
+    /// (cmp-path behavior: `src/ma`, `./fo`, `~/Do`, `/etc/ho`),
+    /// including plain-text files.
+    Anywhere,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BaseDirStrategy {
     FileDir,
     WorkspaceRoot,
@@ -30,6 +40,7 @@ pub enum StatStrategy {
 #[derive(Debug, Clone)]
 pub struct Config {
     pub enable: bool,
+    pub mode: CompletionMode,
     pub path_prefix_fallback: bool,
     pub context_gating: ContextGating,
     pub base_dir: BaseDirStrategy,
@@ -53,6 +64,7 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             enable: true,
+            mode: CompletionMode::Anywhere,
             path_prefix_fallback: true,
             context_gating: ContextGating::Smart,
             base_dir: BaseDirStrategy::FileDir,
@@ -119,6 +131,20 @@ pub fn load_config(value: &Value, warned: &mut bool) -> Config {
     for (key, val) in map {
         match key.as_str() {
             "enable" => set_bool(&mut config.enable, val, key, &mut warnings),
+            "mode" => {
+                if let Some(s) = val.as_str() {
+                    config.mode = match s {
+                        "string" => CompletionMode::String,
+                        "anywhere" => CompletionMode::Anywhere,
+                        _ => {
+                            warnings.push(format!("invalid mode: {s}"));
+                            config.mode
+                        }
+                    };
+                } else {
+                    warnings.push("invalid mode type".into());
+                }
+            }
             "path_prefix_fallback" => {
                 set_bool(&mut config.path_prefix_fallback, val, key, &mut warnings)
             }
@@ -290,6 +316,16 @@ mod tests {
         assert_eq!(cfg.max_results, 20);
         assert_eq!(cfg.context_gating, ContextGating::Strict);
         assert_eq!(cfg.ignore_globs.len(), 1);
+    }
+
+    #[test]
+    fn mode_defaults_to_anywhere_and_parses() {
+        let mut warned = false;
+        let cfg = load_config(&json!({}), &mut warned);
+        assert_eq!(cfg.mode, CompletionMode::Anywhere);
+
+        let cfg = load_config(&json!({"mode": "string"}), &mut warned);
+        assert_eq!(cfg.mode, CompletionMode::String);
     }
 
     #[test]

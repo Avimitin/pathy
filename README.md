@@ -8,6 +8,11 @@ It completes relative (`./`, `../`), absolute (`/`), and home (`~/`) paths, in
 any language listed in `extension.toml`, and merges with the completions of the
 language's primary server.
 
+By default it behaves like nvim-cmp's `cmp-path`: any path-like token
+(`src/ma`, `./fo`, `~/Do`, `/etc/ho`, `..`) is completed regardless of the
+surrounding context or language — including plain-text files. Inside string
+literals it additionally understands quoting and Python call-site contexts.
+
 ## Install (dev)
 
 1) Build the extension (Zed builds WASM automatically) or open the repo in Zed.
@@ -77,6 +82,7 @@ Notes:
 Defaults shown in parentheses:
 
 - `enable` (true)
+- `mode` ("anywhere"): "anywhere" | "string"
 - `path_prefix_fallback` (true)
 - `context_gating` ("smart"): "off" | "smart" | "strict"
 - `base_dir` ("file_dir"): "file_dir" | "workspace_root" | "both"
@@ -97,11 +103,17 @@ Defaults shown in parentheses:
 - `cache_max_dirs` (64)
 - `stat_strategy` ("lazy"): "none" | "lazy" | "eager"
 
-`context_gating` semantics:
+`mode` semantics:
 
-- `"off"`: complete in any string literal.
-- `"smart"`: complete when the string contains an explicit path prefix
-  (`./`, `../`, `/`, `~`, or Windows prefixes), or in Python call-site
+- `"anywhere"` (default): complete bare path tokens anywhere in the document,
+  outside string literals too (`cmp-path` behavior). This covers plain-text
+  files, code, comments, and everything in between.
+- `"string"`: only complete inside string literals.
+
+`context_gating` applies to string-literal completion:
+
+- `"off"`: complete anywhere.
+- `"smart"`: complete on an explicit path prefix, or in Python call-site
   contexts (`open(...)`, `Path(...)`, `read_csv(...)`, `path=` arguments, ...).
 - `"strict"`: only complete in Python call-site contexts.
 
@@ -114,7 +126,7 @@ Example override:
       "settings": {
         "max_results": 40,
         "show_hidden": true,
-        "context_gating": "off"
+        "mode": "anywhere"
       }
     }
   }

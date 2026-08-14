@@ -2,6 +2,11 @@
 
 ## 0.2.0
 
+- `mode` setting with `cmp-path` behavior: `"anywhere"` (default) completes
+  bare path tokens (`src/ma`, `./fo`, `~/Do`, `/etc/ho`, `..`, `.`) in any
+  document and outside string literals, so plain-text files work too.
+  `"string"` keeps the string-literal-only behavior.
+
 - Pathy is no longer Python-only. The sidecar LSP server now serves every
   language declared in `extension.toml` and completes paths inside string
   literals across languages.

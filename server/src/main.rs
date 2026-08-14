@@ -9,10 +9,11 @@ use std::time::Duration;
 
 use cache::{DirCache, DirEntryInfo};
 use completion::{
-    base_dir_from_uri, build_relative_query, filter_entries, find_prefix_query, find_string_info,
-    resolve_list_dirs, segment_start_offset, separator_for_insertion, utf16_len,
+    base_dir_from_uri, build_relative_query, filter_entries, find_bare_prefix_query,
+    find_prefix_query, find_string_info, resolve_list_dirs, segment_start_offset,
+    separator_for_insertion, utf16_len,
 };
-use config::{load_config, Config, ContextGating};
+use config::{load_config, CompletionMode, Config, ContextGating};
 use context::is_path_context;
 use lsp_server::{Connection, Message, Notification, Request, RequestId, Response};
 use lsp_types::{
@@ -103,7 +104,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 handle_request(&connection, &mut state, &request);
             }
             Message::Notification(notification) => {
-                handle_notification(&connection, &mut state, &notification);
+                handle_notification(&mut state, &notification);
             }
             Message::Response(response) => {
                 handle_response(&mut state, &response);
@@ -115,11 +116,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-fn handle_notification(
-    connection: &Connection,
-    state: &mut ServerState,
-    notification: &Notification,
-) {
+fn handle_notification(state: &mut ServerState, notification: &Notification) {
     match notification.method.as_str() {
         "textDocument/didOpen" => {
             if let Ok(params) = serde_json::from_value::<lsp_types::DidOpenTextDocumentParams>(
@@ -273,15 +270,35 @@ fn completion_items(state: &mut ServerState, params: CompletionParams) -> Vec<Co
         None => return Vec::new(),
     };
 
-    let info = match find_string_info(line, cursor_byte, is_python) {
-        Some(info) => info,
-        None => return Vec::new(),
-    };
+    // String-literal completion (quoting-aware, Python call-site gating)
+    // takes precedence; otherwise fall back to bare path tokens anywhere in
+    // the line (cmp-path behavior), which also covers plain-text files.
+    let string_info = find_string_info(line, cursor_byte, is_python);
+    if string_info.is_none() && state.config.mode == CompletionMode::String {
+        return Vec::new();
+    }
 
-    let string_start_offset = line_start_offset + info.string_start_byte;
+    // Content the query is computed against, and where the completion
+    // replaces text. For string literals that is the text inside the
+    // quotes; for bare tokens it is the raw line up to the cursor.
+    let content_before_cursor;
+    let content_start_utf16;
+    let string_start_offset;
+    if let Some(info) = &string_info {
+        content_before_cursor = info.content_before_cursor.clone();
+        content_start_utf16 = info.string_start_utf16;
+        string_start_offset = line_start_offset + info.string_start_byte;
+    } else {
+        content_before_cursor = line[..cursor_byte].to_string();
+        content_start_utf16 = 0;
+        string_start_offset = line_start_offset;
+    }
 
     let prefix_query = if state.config.path_prefix_fallback {
-        find_prefix_query(&info.content_before_cursor, &state.config)
+        match &string_info {
+            Some(info) => find_prefix_query(&info.content_before_cursor, &state.config),
+            None => find_bare_prefix_query(&content_before_cursor, &state.config),
+        }
     } else {
         None
     };
@@ -292,12 +309,13 @@ fn completion_items(state: &mut ServerState, params: CompletionParams) -> Vec<Co
         prefix_query.is_some(),
         string_start_offset,
         is_python,
+        string_info.is_some(),
     ) {
         log_debug(state, "completion gated off");
         return Vec::new();
     }
 
-    let query = prefix_query.unwrap_or_else(|| build_relative_query(&info.content_before_cursor));
+    let query = prefix_query.unwrap_or_else(|| build_relative_query(&content_before_cursor));
 
     let file_dir = base_dir_from_uri(&doc_uri, None);
     let root_dir = state
@@ -324,12 +342,12 @@ fn completion_items(state: &mut ServerState, params: CompletionParams) -> Vec<Co
 
     let filtered = filter_entries(entries, &query.segment_prefix, &state.config);
 
-    let segment_start_byte = segment_start_offset(&info.content_before_cursor);
-    let segment_start_utf16 = utf16_len(&info.content_before_cursor[..segment_start_byte]);
+    let segment_start_byte = segment_start_offset(&content_before_cursor);
+    let segment_start_utf16 = utf16_len(&content_before_cursor[..segment_start_byte]);
 
     let start = Position {
         line: position.line,
-        character: info.string_start_utf16 + segment_start_utf16,
+        character: content_start_utf16 + segment_start_utf16,
     };
     let range = Range {
         start,
@@ -344,27 +362,27 @@ fn completion_items(state: &mut ServerState, params: CompletionParams) -> Vec<Co
         }
     }
 
-    deduped
-        .into_iter()
-        .map(|(name, is_dir)| completion_item(name, is_dir, range, &state.config, &info))
-        .collect()
+    deduped.into_iter().map(|(name, is_dir)| {
+        completion_item(name, is_dir, range, &state.config, &content_before_cursor)
+    }).collect()
 }
 
 fn is_completion_allowed(
     state: &ServerState,
     text: &str,
-    has_prefix_fallback: bool,
+    has_prefix: bool,
     string_start_offset: usize,
     is_python: bool,
+    in_string: bool,
 ) -> bool {
-    let matches_call_context = is_python && is_path_context(text, string_start_offset);
+    let matches_call_context = is_python && in_string && is_path_context(text, string_start_offset);
     match state.config.context_gating {
-        // Complete in any string literal.
+        // Complete anywhere.
         ContextGating::Off => true,
-        // Complete whenever the string contains an explicit path prefix
-        // (`./`, `../`, `/`, `~`), or in Python call-site contexts
-        // (`open(...)`, `Path(...)`, ...).
-        ContextGating::Smart => has_prefix_fallback || matches_call_context,
+        // Complete on an explicit path prefix (`./`, `../`, `/`, `~`,
+        // Windows prefixes, or any `dir/...` token in "anywhere" mode),
+        // or in Python call-site contexts (`open(...)`, `Path(...)`, ...).
+        ContextGating::Smart => has_prefix || matches_call_context,
         // Only complete inside Python call-site contexts.
         ContextGating::Strict => matches_call_context,
     }
@@ -375,11 +393,11 @@ fn completion_item(
     is_dir: bool,
     range: Range,
     config: &Config,
-    info: &completion::StringInfo,
+    content_before_cursor: &str,
 ) -> CompletionItem {
     let mut insert_text = name.clone();
     if is_dir && config.directory_trailing_slash {
-        let sep = separator_for_insertion(&info.content_before_cursor, config);
+        let sep = separator_for_insertion(content_before_cursor, config);
         insert_text.push(sep);
     }
     CompletionItem {

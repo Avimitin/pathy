@@ -251,6 +251,61 @@ pub fn find_prefix_query(content_before_cursor: &str, config: &Config) -> Option
     })
 }
 
+/// Detect a bare path token anywhere in the line (cmp-path behavior).
+///
+/// Works outside string literals, in any document: the last whitespace- or
+/// delimiter-bounded token before the cursor is treated as a path when it
+/// contains a separator (`src/ma`, `./fo`, `~/Do`, `/etc/ho`, `..`) or is a
+/// lone `.`/`..` (listing the current/parent directory).
+pub fn find_bare_prefix_query(content: &str, config: &Config) -> Option<PathQuery> {
+    let token = last_path_token(content);
+    if token.is_empty() {
+        return None;
+    }
+
+    if let Some(sep_idx) = token.rfind(['/', '\\']) {
+        let path_str = &token[..sep_idx + 1];
+        return Some(PathQuery {
+            dir_part: path_str.to_string(),
+            segment_prefix: token[sep_idx + 1..].to_string(),
+            path_str: path_str.to_string(),
+            prefix_kind: prefix_kind_for_path(path_str, config),
+        });
+    }
+
+    // A lone `.` or `..` lists the current/parent directory entries, like
+    // cmp-path does when triggered on the dot.
+    if token == "." || token == ".." {
+        let dir_part = format!("{token}/");
+        return Some(PathQuery {
+            dir_part: dir_part.clone(),
+            segment_prefix: String::new(),
+            path_str: dir_part,
+            prefix_kind: PrefixKind::Relative,
+        });
+    }
+
+    None
+}
+
+fn last_path_token(content: &str) -> &str {
+    let mut start = 0;
+    for (idx, ch) in content.char_indices() {
+        if is_bare_path_delimiter(ch) {
+            start = idx + ch.len_utf8();
+        }
+    }
+    &content[start..]
+}
+
+fn is_bare_path_delimiter(ch: char) -> bool {
+    ch.is_whitespace()
+        || matches!(
+            ch,
+            '"' | '\'' | '`' | '(' | ')' | '[' | ']' | '{' | '}' | '<' | '>' | '=' | ';' | ',' | '|' | '&'
+        )
+}
+
 pub fn build_relative_query(content_before_cursor: &str) -> PathQuery {
     let (dir_part, segment_prefix) = split_dir_and_segment(content_before_cursor);
     PathQuery {
@@ -619,6 +674,63 @@ mod tests {
         let info_text = find_string_info(line, cursor_in_text, true);
         assert!(info_expr.is_none());
         assert!(info_text.is_some());
+    }
+
+    #[test]
+    fn bare_query_mid_token() {
+        let config = Config::default();
+        let q = find_bare_prefix_query("src/ma", &config).unwrap();
+        assert_eq!(q.dir_part, "src/");
+        assert_eq!(q.segment_prefix, "ma");
+        assert_eq!(q.prefix_kind, PrefixKind::Relative);
+    }
+
+    #[test]
+    fn bare_query_after_whitespace() {
+        let config = Config::default();
+        let q = find_bare_prefix_query("  echo ./fo", &config).unwrap();
+        assert_eq!(q.dir_part, "./");
+        assert_eq!(q.segment_prefix, "fo");
+    }
+
+    #[test]
+    fn bare_query_home_and_absolute() {
+        let config = Config::default();
+        let q = find_bare_prefix_query("~/Do", &config).unwrap();
+        assert_eq!(q.dir_part, "~/");
+        assert_eq!(q.segment_prefix, "Do");
+        assert_eq!(q.prefix_kind, PrefixKind::Home);
+
+        let q = find_bare_prefix_query("/etc/ho", &config).unwrap();
+        assert_eq!(q.dir_part, "/etc/");
+        assert_eq!(q.segment_prefix, "ho");
+        assert_eq!(q.prefix_kind, PrefixKind::Absolute);
+    }
+
+    #[test]
+    fn bare_query_delimiter_resets_token() {
+        let config = Config::default();
+        let q = find_bare_prefix_query("copy(src/ma", &config).unwrap();
+        assert_eq!(q.dir_part, "src/");
+        assert_eq!(q.segment_prefix, "ma");
+    }
+
+    #[test]
+    fn bare_query_dot_and_dotdot() {
+        let config = Config::default();
+        let q = find_bare_prefix_query("..", &config).unwrap();
+        assert_eq!(q.dir_part, "../");
+        assert_eq!(q.segment_prefix, "");
+
+        let q = find_bare_prefix_query(".", &config).unwrap();
+        assert_eq!(q.dir_part, "./");
+        assert_eq!(q.segment_prefix, "");
+    }
+
+    #[test]
+    fn bare_query_plain_word_is_none() {
+        let config = Config::default();
+        assert!(find_bare_prefix_query("plainword", &config).is_none());
     }
 
     #[test]
