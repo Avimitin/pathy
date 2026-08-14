@@ -30,7 +30,11 @@ pub struct StringInfo {
     pub string_start_utf16: u32,
 }
 
-pub fn find_string_info(line: &str, cursor_byte: usize) -> Option<StringInfo> {
+pub fn find_string_info(
+    line: &str,
+    cursor_byte: usize,
+    is_python: bool,
+) -> Option<StringInfo> {
     let mut in_string: Option<StringState> = None;
     let mut i = 0usize;
     while i < line.len() {
@@ -56,7 +60,7 @@ pub fn find_string_info(line: &str, cursor_byte: usize) -> Option<StringInfo> {
 
         let ch = line[i..].chars().next()?;
         let ch_len = ch.len_utf8();
-        if in_string.is_none() && ch == '#' {
+        if is_python && in_string.is_none() && ch == '#' {
             break;
         }
 
@@ -553,7 +557,7 @@ mod tests {
     fn detects_string_context_simple() {
         let line = "open(\"./foo\")";
         let cursor = line.find("./foo").unwrap() + "./foo".len();
-        let info = find_string_info(line, cursor).unwrap();
+        let info = find_string_info(line, cursor, true).unwrap();
         assert_eq!(info.content_before_cursor, "./foo");
     }
 
@@ -611,10 +615,25 @@ mod tests {
         let line = "f\"{value}/data\"";
         let cursor_in_expr = line.find("value").unwrap();
         let cursor_in_text = line.find("data").unwrap();
-        let info_expr = find_string_info(line, cursor_in_expr);
-        let info_text = find_string_info(line, cursor_in_text);
+        let info_expr = find_string_info(line, cursor_in_expr, true);
+        let info_text = find_string_info(line, cursor_in_text, true);
         assert!(info_expr.is_none());
         assert!(info_text.is_some());
+    }
+
+    #[test]
+    fn hash_does_not_break_non_python_strings() {
+        // In C/C++ a leading `#` (preprocessor) must not prevent string
+        // detection, unlike Python comments.
+        let line = "#include \"./dir/foo\"";
+        let cursor = line.find("./dir/foo").unwrap() + "./dir/foo".len();
+        let info = find_string_info(line, cursor, false);
+        assert!(info.is_some());
+        assert_eq!(info.unwrap().content_before_cursor, "./dir/foo");
+
+        let py_line = "x = \"foo\"  # \"./ignored\"";
+        let py_cursor = py_line.find("#").unwrap() + 3;
+        assert!(find_string_info(py_line, py_cursor, true).is_none());
     }
 
     #[test]

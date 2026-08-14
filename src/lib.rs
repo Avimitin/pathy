@@ -5,7 +5,7 @@ use zed::{download_file, make_file_executable, serde_json, Command, DownloadedFi
 use zed_extension_api as zed;
 
 const LANGUAGE_SERVER_ID: &str = "pathy";
-const DEFAULT_REPO: &str = "gokulp01/pathy";
+const DEFAULT_REPO: &str = "Avimitin/pathy";
 const CACHE_ROOT_DIR: &str = "cache";
 
 #[derive(Debug, Clone)]

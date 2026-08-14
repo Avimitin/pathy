@@ -253,9 +253,7 @@ fn completion_items(state: &mut ServerState, params: CompletionParams) -> Vec<Co
         None => return Vec::new(),
     };
 
-    if !is_python_document(&doc_uri, doc.language_id.as_deref()) {
-        return Vec::new();
-    }
+    let is_python = is_python_language(doc.language_id.as_deref());
 
     let line = match get_line(&doc.text, position.line) {
         Some(line) => line,
@@ -272,7 +270,7 @@ fn completion_items(state: &mut ServerState, params: CompletionParams) -> Vec<Co
         None => return Vec::new(),
     };
 
-    let info = match find_string_info(line, cursor_byte) {
+    let info = match find_string_info(line, cursor_byte, is_python) {
         Some(info) => info,
         None => return Vec::new(),
     };
@@ -290,6 +288,7 @@ fn completion_items(state: &mut ServerState, params: CompletionParams) -> Vec<Co
         &doc.text,
         prefix_query.is_some(),
         string_start_offset,
+        is_python,
     ) {
         log_debug(state, "completion gated off");
         return Vec::new();
@@ -353,17 +352,18 @@ fn is_completion_allowed(
     text: &str,
     has_prefix_fallback: bool,
     string_start_offset: usize,
+    is_python: bool,
 ) -> bool {
+    let matches_call_context = is_python && is_path_context(text, string_start_offset);
     match state.config.context_gating {
-        ContextGating::Strict => is_path_context(text, string_start_offset),
+        // Complete in any string literal.
         ContextGating::Off => true,
-        ContextGating::Smart => {
-            if has_prefix_fallback {
-                true
-            } else {
-                is_path_context(text, string_start_offset)
-            }
-        }
+        // Complete whenever the string contains an explicit path prefix
+        // (`./`, `../`, `/`, `~`), or in Python call-site contexts
+        // (`open(...)`, `Path(...)`, ...).
+        ContextGating::Smart => has_prefix_fallback || matches_call_context,
+        // Only complete inside Python call-site contexts.
+        ContextGating::Strict => matches_call_context,
     }
 }
 
@@ -432,13 +432,8 @@ fn list_dir_entries(
     Some(entries)
 }
 
-fn is_python_document(uri: &Url, language_id: Option<&str>) -> bool {
-    if let Some(lang) = language_id {
-        if lang.eq_ignore_ascii_case("python") {
-            return true;
-        }
-    }
-    uri.path().ends_with(".py")
+fn is_python_language(language_id: Option<&str>) -> bool {
+    language_id.is_some_and(|lang| lang.eq_ignore_ascii_case("python"))
 }
 
 fn get_line(text: &str, line: u32) -> Option<&str> {

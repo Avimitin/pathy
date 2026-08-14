@@ -1,16 +1,12 @@
 # Pathy
 
 Pathy is a Zed extension (Rust -> WASM) that launches a sidecar LSP server to
-provide filesystem path completions inside Python string literals. It runs as a
+provide filesystem path completions inside string literals. It runs as a
 secondary language server and only advertises completion capability.
 
-
-
-
-https://github.com/user-attachments/assets/5e1ed726-3804-419f-bdb1-93b7ccbbb6f3
-
-
-
+It completes relative (`./`, `../`), absolute (`/`), and home (`~/`) paths, in
+any language listed in `extension.toml`, and merges with the completions of the
+language's primary server.
 
 ## Install (dev)
 
@@ -34,19 +30,21 @@ Settings live under `lsp.pathy.settings` in your Zed settings. This single block
 contains both extension-level settings (download behavior) and server settings
 (completion behavior).
 
-### Language server ordering (Python)
+### Language server ordering
 
-Ensure your primary Python LSP comes first, then Pathy, then the fallback:
+Enable Pathy per language, keeping the primary language server first:
 
 ```json
 {
   "languages": {
-    "Python": {
-      "language_servers": ["pyright", "pathy", "..."]
-    }
+    "Python": { "language_servers": ["pyright", "pathy", "..."] },
+    "Rust": { "language_servers": ["rust-analyzer", "pathy", "..."] }
   }
 }
 ```
+
+For languages without an explicit `language_servers` list, Pathy is started
+automatically once the language is listed in `extension.toml`.
 
 ### Extension settings (download/runtime)
 
@@ -71,7 +69,7 @@ Notes:
 - `server_path` takes precedence. If set and exists, no download is attempted.
 - `auto_download` must be `true` to fetch release assets.
 - `release_channel` only supports `stable`.
-- `base_url` is advanced; default points at `https://github.com/gokulp01/pathy`.
+- `base_url` is advanced; default points at `https://github.com/Avimitin/pathy`.
 - `cache_dir` must be a relative path (relative to the extension working dir).
 
 ### Server settings (completion behavior)
@@ -89,7 +87,8 @@ Defaults shown in parentheses:
 - `include_directories` (true)
 - `directory_trailing_slash` (true)
 - `ignore_globs` (["**/.git/**", "**/.venv/**", "**/venv/**", "**/__pycache__/**",
-  "**/.pytest_cache/**", "**/.mypy_cache/**", "**/.ruff_cache/**", "**/node_modules/**"])
+  "**/.pytest_cache/**", "**/.mypy_cache/**", "**/.ruff_cache/**",
+  "**/node_modules/**", "**/target/**", "**/dist/**", "**/build/**", "**/.direnv/**"])
 - `prefer_forward_slashes` (true)
 - `expand_tilde` (true)
 - `windows_enable_drive_prefix` (true)
@@ -97,6 +96,14 @@ Defaults shown in parentheses:
 - `cache_ttl_ms` (500)
 - `cache_max_dirs` (64)
 - `stat_strategy` ("lazy"): "none" | "lazy" | "eager"
+
+`context_gating` semantics:
+
+- `"off"`: complete in any string literal.
+- `"smart"`: complete when the string contains an explicit path prefix
+  (`./`, `../`, `/`, `~`, or Windows prefixes), or in Python call-site
+  contexts (`open(...)`, `Path(...)`, `read_csv(...)`, `path=` arguments, ...).
+- `"strict"`: only complete in Python call-site contexts.
 
 Example override:
 
@@ -107,22 +114,14 @@ Example override:
       "settings": {
         "max_results": 40,
         "show_hidden": true,
-        "context_gating": "strict"
+        "context_gating": "off"
       }
     }
   }
 }
 ```
 
-## Local testing (Phase 4)
-
-1) Delete the cache directory to force a fresh download:
-   - Default cache root: `cache/pathy/<version>/<os>/<arch>/`
-2) Install as a dev extension (see above).
-3) Open a Python file and try:
-   - `open("./")`
-   - `open("../")`
-   - `open("~/")` (if `expand_tilde` is true)
+## Local testing
 
 To use a local build of the server:
 
@@ -135,20 +134,6 @@ Then set `server_path` to the built binary:
 - macOS/Linux: `server/target/release/pathy-server`
 - Windows: `server/target/release/pathy-server.exe`
 
-## Troubleshooting
-
-- Download failed / 404: Confirm the GitHub Release for your version contains:
-  - `checksums-<version>.txt`
-  - `pathy-server_<version>_<os>_<arch>[.exe]`
-- Checksum failed: Delete the cache directory and retry.
-- Unsupported platform: Only macOS (x86_64/aarch64), Linux (x86_64), Windows (x86_64).
-- No completions: Confirm Pathy is in `languages.Python.language_servers` and the
-  cursor is inside a Python string.
-
-Logs:
-- Zed: open the log window.
-- CLI: run `zed --foreground` to see extension logs.
-
 ## Release assets
 
 Assets are raw binaries (no archives):
@@ -157,13 +142,6 @@ Assets are raw binaries (no archives):
 - `pathy-server_<VERSION>_linux_x86_64`
 - `pathy-server_<VERSION>_windows_x86_64.exe`
 - `checksums-<VERSION>.txt`
-
-## Release process (maintainers)
-
-1) Bump `version` in `extension.toml` and `Cargo.toml`.
-2) Update `CHANGELOG.md`.
-3) Tag: `git tag vX.Y.Z && git push origin vX.Y.Z`.
-4) Verify release assets and checksums on GitHub.
 
 ## License
 
