@@ -10,8 +10,7 @@ use std::time::Duration;
 use cache::{DirCache, DirEntryInfo};
 use completion::{
     base_dir_from_uri, build_relative_query, filter_entries, find_bare_prefix_query,
-    find_prefix_query, find_string_info, resolve_list_dirs, segment_start_offset,
-    separator_for_insertion, utf16_len,
+    find_string_info, resolve_list_dirs, segment_start_offset, separator_for_insertion, utf16_len,
 };
 use config::{load_config, CompletionMode, Config, ContextGating};
 use context::is_path_context;
@@ -295,10 +294,7 @@ fn completion_items(state: &mut ServerState, params: CompletionParams) -> Vec<Co
     }
 
     let prefix_query = if state.config.path_prefix_fallback {
-        match &string_info {
-            Some(info) => find_prefix_query(&info.content_before_cursor, &state.config),
-            None => find_bare_prefix_query(&content_before_cursor, &state.config),
-        }
+        find_bare_prefix_query(&content_before_cursor, &state.config)
     } else {
         None
     };

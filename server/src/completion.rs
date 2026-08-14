@@ -209,48 +209,6 @@ fn is_in_interpolation(content: &str, is_raw: bool) -> bool {
     depth > 0
 }
 
-pub fn find_prefix_query(content_before_cursor: &str, config: &Config) -> Option<PathQuery> {
-    if content_before_cursor.is_empty() {
-        return None;
-    }
-
-    let mut last_start: Option<usize> = None;
-    let mut prev_char: Option<char> = None;
-    for (idx, ch) in content_before_cursor.char_indices() {
-        if let Some(prev) = prev_char {
-            if !prev.is_whitespace() {
-                prev_char = Some(ch);
-                continue;
-            }
-        }
-
-        let remainder = &content_before_cursor[idx..];
-        if remainder.starts_with("../")
-            || remainder.starts_with("./")
-            || remainder.starts_with("/")
-            || remainder.starts_with("~")
-            || (config.windows_enable_unc && remainder.starts_with("\\\\"))
-            || (config.windows_enable_drive_prefix && is_windows_drive_prefix(remainder))
-        {
-            last_start = Some(idx);
-        }
-
-        prev_char = Some(ch);
-    }
-
-    let start = last_start?;
-    let path_str = &content_before_cursor[start..];
-    let prefix_kind = prefix_kind_for_path(path_str, config);
-    let (dir_part, segment_prefix) = split_dir_and_segment(path_str);
-
-    Some(PathQuery {
-        dir_part,
-        segment_prefix,
-        path_str: path_str.to_string(),
-        prefix_kind,
-    })
-}
-
 /// Detect a bare path token anywhere in the line (cmp-path behavior).
 ///
 /// Works outside string literals, in any document: the last whitespace- or
@@ -614,22 +572,6 @@ mod tests {
         let cursor = line.find("./foo").unwrap() + "./foo".len();
         let info = find_string_info(line, cursor, true).unwrap();
         assert_eq!(info.content_before_cursor, "./foo");
-    }
-
-    #[test]
-    fn detects_path_query_with_segment() {
-        let config = Config::default();
-        let query = find_prefix_query("./dir/pa", &config).unwrap();
-        assert_eq!(query.dir_part, "./dir/");
-        assert_eq!(query.segment_prefix, "pa");
-    }
-
-    #[test]
-    fn detects_path_query_home() {
-        let config = Config::default();
-        let query = find_prefix_query("~/Do", &config).unwrap();
-        assert_eq!(query.dir_part, "~/");
-        assert_eq!(query.segment_prefix, "Do");
     }
 
     #[test]
