@@ -13,6 +13,10 @@
   - `"strict"`: only complete in Python call-site contexts.
 - `#` is only treated as a comment terminator in Python documents, so
   preprocessor lines such as `#include "./..."` are handled correctly.
+- Request `workspace/configuration` right after initialize. `lsp-server` 0.7
+  consumes the client's `initialized` notification inside `initialize_finish`,
+  so the previous `initialized` handler never ran and settings only applied
+  after the first `workspace/didChangeConfiguration`.
 - Added `**/target/**`, `**/dist/**`, `**/build/**`, and `**/.direnv/**` to the
   default ignore globs.
 

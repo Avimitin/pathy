@@ -88,6 +88,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     connection.initialize_finish(initialize_id, serde_json::to_value(initialize_result)?)?;
 
+    // lsp-server 0.7 consumes the client's "initialized" notification inside
+    // initialize_finish, so it never reaches the message loop below. Request
+    // the configuration here instead; settings changes still arrive later via
+    // workspace/didChangeConfiguration.
+    request_workspace_config(&connection, &mut state);
+
     for message in &connection.receiver {
         match message {
             Message::Request(request) => {
@@ -153,9 +159,6 @@ fn handle_notification(
             ) {
                 apply_config_update(state, &params.settings);
             }
-        }
-        "initialized" => {
-            request_workspace_config(connection, state);
         }
         "exit" => {
             std::process::exit(0);
