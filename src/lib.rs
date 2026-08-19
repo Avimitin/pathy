@@ -52,11 +52,12 @@ impl zed::Extension for PathyExtension {
         let config = load_extension_config(settings.settings.as_ref());
 
         if let Some(path) = config.server_path.as_ref() {
-            let resolved = PathBuf::from(path);
-            if resolved.exists() {
-                return Ok(Command::new(resolved.to_string_lossy()).envs(worktree.shell_env()));
-            }
-            return Err(format!("server_path not found: {path}"));
+            // `server_path` is spawned by Zed's host process, which has full
+            // filesystem access. Do not validate it here: this code runs inside
+            // the WASM extension's WASI sandbox, which only preopens the
+            // extension's own work directory and therefore cannot see absolute
+            // `/nix/store/...` paths even when they exist on the host.
+            return Ok(Command::new(path.clone()).envs(worktree.shell_env()));
         }
 
         if !config.auto_download {
